@@ -1,7 +1,13 @@
+###############################################
+# AWS Provider
+###############################################
 provider "aws" {
   region = "ap-south-1"
 }
 
+###############################################
+# VPC Configuration
+###############################################
 resource "aws_vpc" "iunite_vpc" {
   cidr_block = "10.0.0.0/16"
 
@@ -10,6 +16,9 @@ resource "aws_vpc" "iunite_vpc" {
   }
 }
 
+###############################################
+# Subnets (2 public subnets in different AZs)
+###############################################
 resource "aws_subnet" "iunite_subnet" {
   count = 2
   vpc_id                  = aws_vpc.iunite_vpc.id
@@ -22,6 +31,9 @@ resource "aws_subnet" "iunite_subnet" {
   }
 }
 
+###############################################
+# Internet Gateway & Routing
+###############################################
 resource "aws_internet_gateway" "iunite_igw" {
   vpc_id = aws_vpc.iunite_vpc.id
 
@@ -49,6 +61,9 @@ resource "aws_route_table_association" "iunite_association" {
   route_table_id = aws_route_table.iunite_route_table.id
 }
 
+###############################################
+# Security Groups
+###############################################
 resource "aws_security_group" "iunite_cluster_sg" {
   vpc_id = aws_vpc.iunite_vpc.id
 
@@ -86,6 +101,9 @@ resource "aws_security_group" "iunite_node_sg" {
   }
 }
 
+###############################################
+# EKS Cluster
+###############################################
 resource "aws_eks_cluster" "iunite" {
   name     = "iunite-cluster"
   role_arn = aws_iam_role.iunite_cluster_role.arn
@@ -96,16 +114,25 @@ resource "aws_eks_cluster" "iunite" {
   }
 }
 
-
+###############################################
+# EKS Add-On (EBS CSI Driver)
+###############################################
 resource "aws_eks_addon" "ebs_csi_driver" {
-  cluster_name    = aws_eks_cluster.iunite.name
-  addon_name      = "aws-ebs-csi-driver"
-  
+  cluster_name = aws_eks_cluster.iunite.name
+  addon_name   = "aws-ebs-csi-driver"
+
   resolve_conflicts_on_create = "OVERWRITE"
   resolve_conflicts_on_update = "OVERWRITE"
+
+  depends_on = [
+    aws_eks_cluster.iunite,
+    aws_eks_node_group.iunite
+  ]
 }
 
-
+###############################################
+# EKS Node Group
+###############################################
 resource "aws_eks_node_group" "iunite" {
   cluster_name    = aws_eks_cluster.iunite.name
   node_group_name = "iunite-node-group"
@@ -124,8 +151,15 @@ resource "aws_eks_node_group" "iunite" {
     ec2_ssh_key = var.ssh_key_name
     source_security_group_ids = [aws_security_group.iunite_node_sg.id]
   }
+
+  depends_on = [
+    aws_eks_cluster.iunite
+  ]
 }
 
+###############################################
+# IAM Roles and Policies
+###############################################
 resource "aws_iam_role" "iunite_cluster_role" {
   name = "iunite-cluster-role"
 
@@ -169,6 +203,7 @@ resource "aws_iam_role" "iunite_node_group_role" {
 EOF
 }
 
+# Node group policies
 resource "aws_iam_role_policy_attachment" "iunite_node_group_role_policy" {
   role       = aws_iam_role.iunite_node_group_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
